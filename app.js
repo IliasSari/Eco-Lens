@@ -10,24 +10,21 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 // --- ΣΥΝΑΡΤΗΣΗ: Φέρνει Points of Interest (POIs) από το Overpass API ---
 async function fetchPOIs(lat, lon, mood) {
-    let amenityTag = 'cafe'; // Default για cozy
+    // Ορίζουμε σωστά τα Overpass tags ανάλογα με τη διάθεση
+    let queryFilter = '';
     if (mood === 'nature') {
-        amenityTag = 'park'; 
+        queryFilter = 'node["leisure"="park"](around:2000, ' + lat + ', ' + lon + ');';
     } else if (mood === 'history') {
-        amenityTag = 'historic'; 
+        queryFilter = 'node["historic"](around:2000, ' + lat + ', ' + lon + ');';
+    } else {
+        // cozy / default
+        queryFilter = 'node["amenity"="cafe"](around:2000, ' + lat + ', ' + lon + ');';
     }
 
     const query = `
-        [out:json];
-        (
-          node["amenity"="${amenityTag}"](around:1500, ${lat}, ${lon});
-          way["amenity"="${amenityTag}"](around:1500, ${lat}, ${lon});
-          node["leisure"="${amenityTag}"](around:1500, ${lat}, ${lon});
-          node["historic"](around:1500, ${lat}, ${lon});
-        );
+        [out:json][timeout:25];
+        (${queryFilter});
         out body;
-        >;
-        out skel qt;
     `;
 
     const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
@@ -35,32 +32,60 @@ async function fetchPOIs(lat, lon, mood) {
     try {
         console.log('Αποστολή αιτήματος στο Overpass API...');
         const response = await fetch(url);
-        const data = await response.json();
         
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
         console.log(`Βρέθηκαν ${data.elements.length} σημεία!`, data.elements);
         return data.elements;
     } catch (error) {
         console.error('Σφάλμα κατά την ανάκτηση των POIs:', error);
-        alert('Υπήρξε κάποιο πρόβλημα στην επικοινωνία με τον χάρτη. Δοκίμασε ξανά!');
+        alert('Ο server του Overpass είναι προσωρινά φορτωμένος. Δοκίμασε ξανά σε λίγο!');
         return [];
     }
 }
 
+// --- ΣΥΝΑΡΤΗΣΗ: Καθαρίζει και εμφανίζει τα markers στον χάρτη ---
+let markersLayer = L.layerGroup().addTo(map); // Layer για να διαχειριζόμαστε τα pins
 
+function displayPOIsOnMap(pois) {
+    // Καθαρίζουμε τα παλιά markers αν υπήρχαν
+    markersLayer.clearLayers();
+
+    pois.forEach(poi => {
+        // Το Overpass μπορεί να επιστρέψει nodes (με lat/lon) ή ways (με center lat/lon)
+        const lat = poi.lat || (poi.center ? poi.center.lat : null);
+        const lon = poi.lon || (poi.center ? poi.center.lon : null);
+
+        if (lat && lon) {
+            // Παίρνουμε το όνομα του σημείου ή βάζουμε ένα default
+            const name = poi.tags && poi.tags.name ? poi.tags.name : 'Σημείο Ενδιαφέροντος';
+            
+            // Δημιουργία marker στο Leaflet
+            const marker = L.marker([lat, lon]).addTo(markersLayer);
+            
+            // Προσθήκη popup με το όνομα όταν ο χρήστης κάνει κλικ στο pin
+            marker.bindPopup(`<b>${name}</b><br>EcoLens Micro-Adventure`);
+        }
+    });
+}
 // --- 3. Διαχείριση κλικ στο κουμπί δημιουργίας διαδρομής ---
 document.getElementById('generate-btn').addEventListener('click', async () => {
     const selectedMood = document.getElementById('mood-select').value;
     const selectedTime = document.getElementById('time-select').value;
 
-    // Προσωρινές συντεταγμένες (Κέντρο Θεσσαλονίκης)
     const currentLat = 40.6401;
     const currentLon = 22.9444;
 
     console.log(`Ο AI Agent ξεκινάει! Διάθεση: ${selectedMood}, Χρόνος: ${selectedTime} min`);
 
-    // Καλούμε την API συνάρτηση και περιμένουμε τα αποτελέσματα
+    // Φέρνουμε τα σημεία από το Overpass API
     const pois = await fetchPOIs(currentLat, currentLon, selectedMood);
     
-    // Εμφανίζουμε μήνυμα με τα αποτελέσματα που φέραμε
-    alert(`Επιτυχία! Βρέθηκαν ${pois.length} σημεία ενδιαφέροντος γύρω σου.`);
+    // Εμφανίζουμε τα σημεία στον χάρτη!
+    displayPOIsOnMap(pois);
+
+    alert(`Επιτυχία! Βρέθηκαν και σχεδιάστηκαν ${pois.length} σημεία στον χάρτη.`);
 });
